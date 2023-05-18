@@ -15,7 +15,7 @@ from nautobot.extras.models import DynamicGroup, ObjectChange
 from nautobot.extras.utils import extras_features
 from nautobot.utilities.utils import serialize_object, serialize_object_v2
 from netutils.config.compliance import feature_compliance
-from nautobot_golden_config.choices import ComplianceRuleTypeChoice
+from nautobot_golden_config.choices import ComplianceRuleTypeChoice, RemediationTypeChoice
 from nautobot_golden_config.utilities.constant import ENABLE_SOTAGG, PLUGIN_CFG
 from nautobot_golden_config.utilities.utils import get_platform
 
@@ -688,3 +688,103 @@ class ConfigReplace(PrimaryModel):  # pylint: disable=too-many-ancestors
     def __str__(self):
         """Return a simple string if model is called."""
         return self.name
+
+#
+# ========== 8< Mareks draft for Config Remediation.
+#
+@extras_features(
+    "custom_fields",
+    "custom_validators",
+    "export_templates",
+    "graphql",
+    "relationships",
+    "webhooks",
+)
+class ConfigurationChangePlan(PrimaryModel):
+    """ConfigurationChangePlan details."""
+    plan = models.TextField(blank=True, help_text="Configuration Change Plan. Stores CLI commands")
+    # Other use cases:
+    # change_request_id = ...
+    # planned_date = ...
+    # approval = ...
+
+
+@extras_features(
+    "custom_fields",
+    "custom_validators",
+    "export_templates",
+    "graphql",
+    "relationships",
+    "webhooks",
+)
+class RemediationRule(PrimaryModel):  # pylint: disable=too-many-ancestors
+    """RemediationRule details."""
+
+    compliance_rule = models.ForeignKey(
+        to="ComplianceRule",
+        on_delete=models.PROTECT,
+        blank=False,
+        null=False,
+        related_name="remediationrules"
+    )
+
+    description = models.CharField(
+        max_length=200,
+        blank=True,
+    )
+
+    csv_headers = ["compliance_rule", "description"]
+
+    def to_csv(self):
+        """Indicates model fields to return as csv."""
+        return (
+            self.compliance_rule,
+            self.description,
+        )
+
+    def __str__(self):
+        """Return a sane string representation of the instance."""
+        return f"{self.compliance_rule.platform} - {self.compliance_rule.feature.name}"
+
+    def get_absolute_url(self):
+        """Absolute url for the RemediationRule instance."""
+        return reverse("plugins:nautobot_golden_config:remediationrule", args=[self.pk])
+
+@extras_features(
+    "custom_fields",
+    "custom_validators",
+    "export_templates",
+    "graphql",
+    "relationships",
+    "webhooks",
+)
+class RemediationSetting(PrimaryModel):  # pylint: disable=too-many-ancestors
+    """RemediationSetting details."""
+
+    name = models.CharField(max_length=255, unique=True, blank=False)
+
+    remediation_type = models.CharField(
+        max_length=50,
+        default=RemediationTypeChoice.TYPE_HIERCONFIG,
+        choices=RemediationTypeChoice,
+        help_text="Whether the remediation setting is type HC or custom.",
+    )
+
+    options = models.JSONField(default=dict)
+
+    csv_headers = ["name", "remediation_type"]
+
+    def to_csv(self):
+        """Indicates model fields to return as csv."""
+        return (
+            self.name,
+            self.remediation_type,
+        )
+
+    def __str__(self):
+        """Return a sane string representation of the instance."""
+        return f"{self.name}"
+
+    def get_absolute_url(self):
+        """Absolute url for the RemediationRule instance."""
+        return reverse("plugins:nautobot_golden_config:remediationsetting", args=[self.pk])
