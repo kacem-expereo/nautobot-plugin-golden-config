@@ -167,6 +167,7 @@ def _get_hierconfig_remediation(obj):
     host = Host(
         hostname=obj.device.name,
         hconfig_options=obj.rule.remediation_setting.remediation_options,
+        os=PLATFORM_LOOKUP_TABLE[obj.device.platform.slug],
     )
     host.load_generated_config(obj.intended_config)
     host.load_running_config(obj.backup_config)
@@ -816,5 +817,6 @@ class RemediationSetting(PrimaryModel):  # pylint: disable=too-many-ancestors
         return reverse("plugins:nautobot_golden_config:remediationsetting", args=[self.pk])
 
     def clean(self):
+        # TODO(mzb): validate if given platform supported by hier config.
         # TODO(mzb): validate `if TYPE_HIERCONFIG`, then schema-check / enforce non-empty `remediation_options`.
         pass
