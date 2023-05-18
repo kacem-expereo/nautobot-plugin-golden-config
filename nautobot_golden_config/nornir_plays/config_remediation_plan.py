@@ -1,1 +1,0 @@
-"""Stores the nornir play for configuration remediation plan (generation)."""

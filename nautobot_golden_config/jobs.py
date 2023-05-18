@@ -116,6 +116,45 @@ class ComplianceJob(Job, FormEntry):
         config_compliance(self, data)
 
 
+class RemediationJob(Job, FormEntry):
+    """Job to to run the remediation."""
+
+    tenant_group = FormEntry.tenant_group
+    tenant = FormEntry.tenant
+    region = FormEntry.region
+    site = FormEntry.site
+    rack_group = FormEntry.rack_group
+    rack = FormEntry.rack
+    role = FormEntry.role
+    manufacturer = FormEntry.manufacturer
+    platform = FormEntry.platform
+    device_type = FormEntry.device_type
+    device = FormEntry.device
+    tag = FormEntry.tag
+    status = FormEntry.status
+    debug = FormEntry.debug
+
+    class Meta:
+        """Meta object boilerplate for remediation."""
+
+        name = "Perform Configuration Remediation"
+        description = "Run configuration remediation on your network infrastructure."
+
+    @commit_check
+    def run(self, data, commit):  # pylint: disable=too-many-branches
+        """Run config remediation report script."""
+        # pylint: disable=unused-argument
+        self.log_debug("Starting remediation job.")
+
+        self.log_debug("Refreshing intended configuration git repository.")
+        get_refreshed_repos(job_obj=self, repo_type="intended_repository", data=data)
+        self.log_debug("Refreshing backup configuration git repository.")
+        get_refreshed_repos(job_obj=self, repo_type="backup_repository", data=data)
+
+        self.log_debug("Starting config compliance nornir play.")
+        config_compliance(self, data)
+
+
 class IntendedJob(Job, FormEntry):
     """Job to to run generation of intended configurations."""
 
