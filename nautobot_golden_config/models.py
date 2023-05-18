@@ -17,7 +17,7 @@ from nautobot.utilities.utils import serialize_object, serialize_object_v2
 from nautobot.core.models.generics import PrimaryModel
 from netutils.config.compliance import feature_compliance
 
-from nautobot_golden_config.choices import ComplianceRuleTypeChoice
+from nautobot_golden_config.choices import ComplianceRuleTypeChoice, RemediationTypeChoice
 from nautobot_golden_config.utilities.utils import get_platform
 from nautobot_golden_config.utilities.constant import PLUGIN_CFG
 
@@ -291,6 +291,7 @@ class ConfigCompliance(PrimaryModel):  # pylint: disable=too-many-ancestors
 
     device = models.ForeignKey(to="dcim.Device", on_delete=models.CASCADE, help_text="The device", blank=False)
     rule = models.ForeignKey(to="ComplianceRule", on_delete=models.CASCADE, blank=False, related_name="rule")
+    configuration_remediation_plan = models.ForeignKey(to="ConfigurationChangePlan", on_delete=models.CASCADE, blank=True, related_name="rule")
     compliance = models.BooleanField(null=True, blank=True)
     actual = models.JSONField(blank=True, help_text="Actual Configuration for feature")
     intended = models.JSONField(blank=True, help_text="Intended Configuration for feature")
@@ -385,8 +386,6 @@ class GoldenConfig(PrimaryModel):  # pylint: disable=too-many-ancestors
     compliance_last_attempt_date = models.DateTimeField(null=True)
     compliance_last_success_date = models.DateTimeField(null=True)
 
-    remediation = models.TextField(blank=True, help_text="Configuration commands to bring device into compliance")
-
     csv_headers = [
         "Device Name",
         "backup attempt",
@@ -412,7 +411,7 @@ class GoldenConfig(PrimaryModel):  # pylint: disable=too-many-ancestors
     def to_objectchange(self, action, related_object=None, object_data_extra=None, object_data_exclude=None):
         """Remove actual and intended configuration from changelog."""
         if not object_data_exclude:
-            object_data_exclude = ["backup_config", "intended_config", "compliance_config", "remediation"]
+            object_data_exclude = ["backup_config", "intended_config", "compliance_config"]
         return ObjectChange(
             changed_object=self,
             object_repr=str(self),
@@ -422,29 +421,29 @@ class GoldenConfig(PrimaryModel):  # pylint: disable=too-many-ancestors
             related_object=related_object,
         )
 
-    def save(self, *args, **kwargs):
-        """Save method is overloaded here to attempt generating the remediation config if the backup and intended configs are present."""
-        if self.backup_config and self.intended_config:
-            h_config_options = None
-            try:
-                # Get the remediation settings for the device platform
-                h_config_options = HConfigOptions.objects.get(target_platform=self.device.platform.id)
-            except HConfigOptions.DoesNotExist:
-                # If we don't have a remediation settings for the device platform, then we can attempt to generate the remediation config if it matches one of our default supported platforms
-                if self.device.platform.slug in PLATFORM_LOOKUP_TABLE.keys():
-                    host = Host(hostname=self.device.name, os=PLATFORM_LOOKUP_TABLE.get(self.device.platform.slug))
-                    host.load_generated_config(self.intended_config)
-                    host.load_running_config(self.backup_config)
-                    host.remediation_config()
-                    self.remediation = host.remediation_config_filtered_text(include_tags={}, exclude_tags={})
-            # If we can match a remediation settings to the device platform, then we can generate the remediation config with those custom settings
-            if h_config_options and h_config_options.target_platform == self.device.platform:
-                host = Host(hostname=self.device.name, hconfig_options=h_config_options.hier_options)
-                host.load_generated_config(self.intended_config)
-                host.load_running_config(self.backup_config)
-                host.remediation_config()
-                self.remediation = host.remediation_config_filtered_text(include_tags={}, exclude_tags={})
-        super().save(*args, **kwargs)
+    # def save(self, *args, **kwargs):
+    #     """Save method is overloaded here to attempt generating the remediation config if the backup and intended configs are present."""
+    #     if self.backup_config and self.intended_config:
+    #         h_config_options = None
+    #         try:
+    #             # Get the remediation settings for the device platform
+    #             h_config_options = HConfigOptions.objects.get(target_platform=self.device.platform.id)
+    #         except HConfigOptions.DoesNotExist:
+    #             # If we don't have a remediation settings for the device platform, then we can attempt to generate the remediation config if it matches one of our default supported platforms
+    #             if self.device.platform.slug in PLATFORM_LOOKUP_TABLE.keys():
+    #                 host = Host(hostname=self.device.name, os=PLATFORM_LOOKUP_TABLE.get(self.device.platform.slug))
+    #                 host.load_generated_config(self.intended_config)
+    #                 host.load_running_config(self.backup_config)
+    #                 host.remediation_config()
+    #                 self.remediation = host.remediation_config_filtered_text(include_tags={}, exclude_tags={})
+    #         # If we can match a remediation settings to the device platform, then we can generate the remediation config with those custom settings
+    #         if h_config_options and h_config_options.target_platform == self.device.platform:
+    #             host = Host(hostname=self.device.name, hconfig_options=h_config_options.hier_options)
+    #             host.load_generated_config(self.intended_config)
+    #             host.load_running_config(self.backup_config)
+    #             host.remediation_config()
+    #             self.remediation = host.remediation_config_filtered_text(include_tags={}, exclude_tags={})
+    #     super().save(*args, **kwargs)
 
     class Meta:
         """Set unique together fields for model."""
@@ -709,24 +708,60 @@ class ConfigReplace(PrimaryModel):  # pylint: disable=too-many-ancestors
         return self.name
 
 
-class HConfigOptions(PrimaryModel):
-    """Options for customizing the behavior of hier_config remediation."""
+@extras_features(
+     "custom_fields",
+     "custom_validators",
+     "export_templates",
+     "graphql",
+     "relationships",
+     "webhooks",
+ )
+class ConfigurationChangePlan(PrimaryModel):
+    """ConfigurationChangePlan details."""
+    plan = models.TextField(blank=True, help_text="Configuration Change Plan. Stores CLI commands")
+    device = models.ForeignKey(to="dcim.Device", on_delete=models.CASCADE, help_text="The device", blank=False)
+    # Other use cases:
+    #  - weight / execution order = ...
+    #  - change_request_id = ...
+    #  - planned_date = ...
+    #  - approval = ...
 
-    name = models.CharField(max_length=255, unique=True)
-    hier_options = models.JSONField(default=dict)
-    target_platform = models.OneToOneField(
-        to="dcim.Platform", on_delete=models.CASCADE, related_name="h_config_options", null=True, blank=True
+
+@extras_features(
+    "custom_fields",
+    "custom_validators",
+    "export_templates",
+    "graphql",
+    "relationships",
+    "webhooks",
+)
+class RemediationSetting(PrimaryModel):  # pylint: disable=too-many-ancestors
+    """RemediationSetting details."""
+
+    name = models.CharField(max_length=255, unique=True, blank=False)
+
+    remediation_type = models.CharField(
+        max_length=50,
+        default=RemediationTypeChoice.TYPE_HIERCONFIG,
+        choices=RemediationTypeChoice,
+        help_text="Whether the remediation setting is type HC or custom.",
     )
 
-    class Meta:
-        """Meta information for HConfigOptions model."""
+    options = models.JSONField(default=dict)
 
-        ordering = ["name"]
+    csv_headers = ["name", "remediation_type"]
 
-    def get_absolute_url(self):
-        """Return absolute URL for instance."""
-        return reverse("plugins:nautobot_golden_config:hconfigoptions", args=[self.pk])
+    def to_csv(self):
+        """Indicates model fields to return as csv."""
+        return (
+            self.name,
+            self.remediation_type,
+        )
 
     def __str__(self):
-        """Return a simple string if model is called."""
-        return self.name
+        """Return a sane string representation of the instance."""
+        return f"{self.name}"
+
+    def get_absolute_url(self):
+        """Absolute url for the RemediationRule instance."""
+        return reverse("plugins:nautobot_golden_config:remediationsetting", args=[self.pk])
