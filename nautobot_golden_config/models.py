@@ -17,7 +17,7 @@ from nautobot.utilities.utils import serialize_object, serialize_object_v2
 from nautobot.core.models.generics import PrimaryModel
 from netutils.config.compliance import feature_compliance
 
-from nautobot_golden_config.choices import ComplianceRuleTypeChoice, RemediationTypeChoice
+from nautobot_golden_config.choices import ComplianceRuleTypeChoice, RemediationTypeChoice, ConfigPlanTypeChoice
 from nautobot_golden_config.utilities.utils import get_platform
 from nautobot_golden_config.utilities.constant import PLUGIN_CFG
 
@@ -145,25 +145,8 @@ def _verify_get_custom_compliance_data(compliance_details):
             raise ValidationError(VALIDATION_MSG.format(val, "String or Json", compliance_details[val]))
 
 
-# The below maps the provided compliance types
-FUNC_MAPPER = {
-    ComplianceRuleTypeChoice.TYPE_CLI: _get_cli_compliance,
-    ComplianceRuleTypeChoice.TYPE_JSON: _get_json_compliance,
-}
-# The below conditionally add the custom provided compliance type
-if PLUGIN_CFG.get("get_custom_compliance"):
-    try:
-        FUNC_MAPPER[ComplianceRuleTypeChoice.TYPE_CUSTOM] = import_string(PLUGIN_CFG["get_custom_compliance"])
-    except Exception as error:  # pylint: disable=broad-except
-        msg = (
-            "There was an issue attempting to import the get_custom_compliance function of"
-            f"{PLUGIN_CFG['get_custom_compliance']}, this is expected with a local configuration issue "
-            "and not related to the Golden Configuration Plugin, please contact your system admin for further details"
-        )
-        raise Exception(msg).with_traceback(error.__traceback__)
-
-
 def _get_hierconfig_remediation(obj):
+    """Returns the remediation plan."""
     host = Host(
         hostname=obj.device.name,
         hconfig_options=obj.rule.remediation_setting.remediation_options,
@@ -179,9 +162,24 @@ def _get_hierconfig_remediation(obj):
 
 # The below maps the provided compliance types
 FUNC_MAPPER = {
+    ComplianceRuleTypeChoice.TYPE_CLI: _get_cli_compliance,
+    ComplianceRuleTypeChoice.TYPE_JSON: _get_json_compliance,
     RemediationTypeChoice.TYPE_HIERCONFIG: _get_hierconfig_remediation,
 }
-if PLUGIN_CFG.get("get_custom_remediation"):
+
+# The below conditionally add the custom provided compliance type
+if PLUGIN_CFG.get("get_custom_compliance"):
+    try:
+        FUNC_MAPPER[ComplianceRuleTypeChoice.TYPE_CUSTOM] = import_string(PLUGIN_CFG["get_custom_compliance"])
+    except Exception as error:  # pylint: disable=broad-except
+        msg = (
+            "There was an issue attempting to import the get_custom_compliance function of"
+            f"{PLUGIN_CFG['get_custom_compliance']}, this is expected with a local configuration issue "
+            "and not related to the Golden Configuration Plugin, please contact your system admin for further details"
+        )
+        raise Exception(msg).with_traceback(error.__traceback__)
+
+if PLUGIN_CFG.get("get_custom_remediation"):  # TODO(mzb): duplicated code.
     try:
         FUNC_MAPPER[RemediationTypeChoice.TYPE_CUSTOM] = import_string(PLUGIN_CFG["get_custom_remediation"])
     except Exception as error:  # pylint: disable=broad-except
@@ -329,8 +327,8 @@ class ConfigCompliance(PrimaryModel):  # pylint: disable=too-many-ancestors
 
     device = models.ForeignKey(to="dcim.Device", on_delete=models.CASCADE, help_text="The device", blank=False)
     rule = models.ForeignKey(to="ComplianceRule", on_delete=models.CASCADE, blank=False, related_name="rule")
-    configuration_remediation_plan = models.ForeignKey(
-        to="ConfigurationChangePlan",
+    feature_remediation_plan = models.ForeignKey(
+        to="ConfigPlan",
         on_delete=models.CASCADE,
         blank=True,
         related_name="Actual Remediation for feature"
@@ -377,12 +375,7 @@ class ConfigCompliance(PrimaryModel):  # pylint: disable=too-many-ancestors
         """String representation of a the compliance."""
         return f"{self.device} -> {self.rule} -> {self.compliance}"
 
-    def remediation_pre_save(self):
-        """The actual remediation happens here, before saving the object."""
-        pass
-
-    def save(self, *args, **kwargs):
-        """The actual configuration compliance happens here, but the details for actual compliance job would be found in FUNC_MAPPER."""
+    def compliance_pre_save(self):
         if self.rule.config_type == ComplianceRuleTypeChoice.TYPE_CUSTOM and not FUNC_MAPPER.get(
             ComplianceRuleTypeChoice.TYPE_CUSTOM
         ):
@@ -400,6 +393,23 @@ class ConfigCompliance(PrimaryModel):  # pylint: disable=too-many-ancestors
         self.missing = compliance_details["missing"]
         self.extra = compliance_details["extra"]
 
+    def remediation_pre_save(self):
+        """The actual remediation happens here, before saving the object."""
+        remediation_plan = FUNC_MAPPER[self.rule.remediation_setting.remediation_type](obj=self)
+        if not self.feature_remediation_plan:
+            self.feature_remediation_plan = ConfigPlan.objects.create(
+                device=self.device,
+                plan_type=ConfigPlanTypeChoice.TYPE_FEATURE_REMEDIATION,
+                plan=remediation_plan,
+            )
+        else:
+            self.feature_remediation_plan.plan = remediation_plan
+            self.feature_remediation_plan.validated_save()
+
+    def save(self, *args, **kwargs):
+        """The actual configuration compliance happens here, but the details for actual compliance job would be found in FUNC_MAPPER."""
+
+        self.compliance_pre_save()
         self.remediation_pre_save()
 
         super().save(*args, **kwargs)
@@ -765,10 +775,18 @@ class ConfigReplace(PrimaryModel):  # pylint: disable=too-many-ancestors
      "relationships",
      "webhooks",
  )
-class ConfigurationChangePlan(PrimaryModel):
+class ConfigPlan(PrimaryModel):
     """ConfigurationChangePlan details."""
     plan = models.TextField(blank=True, help_text="Configuration Change Plan. Stores CLI commands")
     device = models.ForeignKey(to="dcim.Device", on_delete=models.CASCADE, help_text="The device", blank=False)
+
+    plan_type = models.CharField(
+        max_length=50,
+        default=ConfigPlanTypeChoice.TYPE_FEATURE_INTENDED,
+        choices=ConfigPlanTypeChoice,
+        help_text="Config plan type.",
+    )
+
     # Other use cases:
     #  - weight / execution order = ...
     #  - change_request_id = ...
