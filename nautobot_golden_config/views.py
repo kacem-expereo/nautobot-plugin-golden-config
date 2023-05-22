@@ -792,6 +792,7 @@ class ConfigReplaceUIViewSet(NautobotUIViewSet):
     table_class = tables.ConfigReplaceTable
     lookup_field = "pk"
 
+
 class RemediationSettingUIViewSet(NautobotUIViewSet):
     """Views for the RemediationSetting model."""
 
