@@ -9,7 +9,7 @@ from django.core.exceptions import ValidationError
 from django.shortcuts import reverse
 from django.utils.module_loading import import_string
 from django.utils.text import slugify
-from hier_config import Host
+from hier_config import Host as HierConfigHost
 
 from nautobot.extras.models import ObjectChange, DynamicGroup
 from nautobot.extras.utils import extras_features
@@ -44,12 +44,12 @@ PLATFORM_LOOKUP_TABLE = {
     "cisco_nxos": "nxos",
     "arista_eos": "eos",
 }
-LINEAGE_CHOICES = (
-    ("startswith", "startswith"),
-    ("endswith", "endswith"),
-    ("contains", "contains"),
-    ("equals", "equals"),
-)
+# LINEAGE_CHOICES = (
+#     ("startswith", "startswith"),
+#     ("endswith", "endswith"),
+#     ("contains", "contains"),
+#     ("equals", "equals"),
+# )
 
 
 def _is_jsonable(val):
@@ -147,7 +147,7 @@ def _verify_get_custom_compliance_data(compliance_details):
 
 def _get_hierconfig_remediation(obj):
     """Returns the remediation plan."""
-    host = Host(
+    host = HierConfigHost(
         hostname=obj.device.name,
         hconfig_options=obj.rule.remediation_setting.remediation_options,
         os=PLATFORM_LOOKUP_TABLE[obj.device.platform.slug],
@@ -155,9 +155,9 @@ def _get_hierconfig_remediation(obj):
     host.load_generated_config(obj.intended_config)
     host.load_running_config(obj.backup_config)
     host.remediation_config()
-    configuration_change_plan = host.remediation_config_filtered_text(include_tags={}, exclude_tags={})
+    remediation_config = host.remediation_config_filtered_text(include_tags={}, exclude_tags={})
 
-    return configuration_change_plan
+    return remediation_config
 
 
 # The below maps the provided compliance types
@@ -327,17 +327,14 @@ class ConfigCompliance(PrimaryModel):  # pylint: disable=too-many-ancestors
 
     device = models.ForeignKey(to="dcim.Device", on_delete=models.CASCADE, help_text="The device", blank=False)
     rule = models.ForeignKey(to="ComplianceRule", on_delete=models.CASCADE, blank=False, related_name="rule")
-    feature_remediation_plan = models.ForeignKey(
-        to="ConfigPlan",
-        on_delete=models.CASCADE,
-        blank=True,
-        related_name="Actual Remediation for feature"
-    )
     compliance = models.BooleanField(null=True, blank=True)
     actual = models.JSONField(blank=True, help_text="Actual Configuration for feature")
     intended = models.JSONField(blank=True, help_text="Intended Configuration for feature")
+    # these three are config snippets exposed for the ConfigDeployment.
+    remediation = models.JSONField(blank=True, help_text="Remediation Configuration for feature")
     missing = models.JSONField(blank=True, help_text="Configuration that should be on the device.")
     extra = models.JSONField(blank=True, help_text="Configuration that should not be on the device.")
+
     ordered = models.BooleanField(default=True)
     # Used for django-pivot, both compliance and compliance_int should be set.
     compliance_int = models.IntegerField(null=True, blank=True)
@@ -375,7 +372,7 @@ class ConfigCompliance(PrimaryModel):  # pylint: disable=too-many-ancestors
         """String representation of a the compliance."""
         return f"{self.device} -> {self.rule} -> {self.compliance}"
 
-    def compliance_pre_save(self):
+    def compliance_on_save(self):
         if self.rule.config_type == ComplianceRuleTypeChoice.TYPE_CUSTOM and not FUNC_MAPPER.get(
             ComplianceRuleTypeChoice.TYPE_CUSTOM
         ):
@@ -393,24 +390,19 @@ class ConfigCompliance(PrimaryModel):  # pylint: disable=too-many-ancestors
         self.missing = compliance_details["missing"]
         self.extra = compliance_details["extra"]
 
-    def remediation_pre_save(self):
+    def remediation_on_save(self):
         """The actual remediation happens here, before saving the object."""
-        remediation_plan = FUNC_MAPPER[self.rule.remediation_setting.remediation_type](obj=self)
-        if not self.feature_remediation_plan:
-            self.feature_remediation_plan = ConfigPlan.objects.create(
-                device=self.device,
-                plan_type=ConfigPlanTypeChoice.TYPE_FEATURE_REMEDIATION,
-                plan=remediation_plan,
-            )
-        else:
-            self.feature_remediation_plan.plan = remediation_plan
-            self.feature_remediation_plan.validated_save()
+
+        # Perform remediation only if not compliant.
+        if not self.compliance:
+            remediation_config = FUNC_MAPPER[self.rule.remediation_setting.remediation_type](obj=self)
+            self.remediation = remediation_config
 
     def save(self, *args, **kwargs):
         """The actual configuration compliance happens here, but the details for actual compliance job would be found in FUNC_MAPPER."""
 
-        self.compliance_pre_save()
-        self.remediation_pre_save()
+        self.compliance_on_save()
+        self.remediation_on_save()
 
         super().save(*args, **kwargs)
 
@@ -767,31 +759,45 @@ class ConfigReplace(PrimaryModel):  # pylint: disable=too-many-ancestors
         return self.name
 
 
-@extras_features(
-     "custom_fields",
-     "custom_validators",
-     "export_templates",
-     "graphql",
-     "relationships",
-     "webhooks",
- )
-class ConfigPlan(PrimaryModel):
-    """ConfigurationChangePlan details."""
-    plan = models.TextField(blank=True, help_text="Configuration Change Plan. Stores CLI commands")
-    device = models.ForeignKey(to="dcim.Device", on_delete=models.CASCADE, help_text="The device", blank=False)
-
-    plan_type = models.CharField(
-        max_length=50,
-        default=ConfigPlanTypeChoice.TYPE_FEATURE_INTENDED,
-        choices=ConfigPlanTypeChoice,
-        help_text="Config plan type.",
-    )
-
-    # Other use cases:
-    #  - weight / execution order = ...
-    #  - change_request_id = ...
-    #  - planned_date = ...
-    #  - approval = ...
+# @extras_features(
+#      "custom_fields",
+#      "custom_validators",
+#      "export_templates",
+#      "graphql",
+#      "relationships",
+#      "webhooks",
+#  )
+# class ConfigPlan(PrimaryModel):
+#     """ConfigurationChangePlan details."""
+#
+#     name = models.CharField(max_length=100, unique=True, blank=False)
+#
+#     # cascade ?
+#     device = models.ForeignKey(to="dcim.Device", on_delete=models.CASCADE, help_text="The device", blank=False)
+#
+#     # cascade ?
+#     features = models.ManyToManyField(to="ComplianceFeature", on_delete=models.CASCADE, blank=True, related_name="configplans")
+#
+#     plan_type = models.CharField(
+#         max_length=50,
+#         default=ConfigPlanTypeChoice.TYPE_FEATURE_INTENDED,
+#         choices=ConfigPlanTypeChoice,
+#         help_text="Config plan type.",
+#     )
+#
+#     plan = models.TextField(blank=True, help_text="Configuration Change Plan. Stores CLI commands")
+#
+#     # todo(mzb): understand feature for given `ConfigPlanTypeChoice.TYPE_FEATURE_INTENDED`
+#
+#     @property
+#     def related_compliances(self):
+#         return self.compliancerule.objects.related()
+#
+#     # Future :
+#     #  - weight / execution order = ...
+#     #  - change_request_id = ...
+#     #  - planned_date = ...
+#     #  - approval = ...
 
 
 @extras_features(
@@ -805,7 +811,10 @@ class ConfigPlan(PrimaryModel):
 class RemediationSetting(PrimaryModel):  # pylint: disable=too-many-ancestors
     """RemediationSetting details."""
 
-    name = models.CharField(max_length=255, unique=True, blank=False)
+    # name as the unique key follows the goldenConfigSetting pattern
+    # !! setting platform here is not needed - platform is specified at the ComplianceRule already !!
+    name = models.CharField(max_length=100, unique=True, blank=False)
+    slug = models.SlugField(max_length=100, unique=True, blank=False)
 
     remediation_type = models.CharField(
         max_length=50,
@@ -814,6 +823,7 @@ class RemediationSetting(PrimaryModel):  # pylint: disable=too-many-ancestors
         help_text="Whether the remediation setting is type HC or custom.",
     )
 
+    # takes options.yaml.
     remediation_options = models.JSONField(default=dict)
 
     csv_headers = ["name", "remediation_type", "remediation_options"]
@@ -835,6 +845,7 @@ class RemediationSetting(PrimaryModel):  # pylint: disable=too-many-ancestors
         return reverse("plugins:nautobot_golden_config:remediationsetting", args=[self.pk])
 
     def clean(self):
+        # TODO(mzb): force specify config_options for hierConfig
         # TODO(mzb): validate if given platform supported by hier config.
         # TODO(mzb): validate `if TYPE_HIERCONFIG`, then schema-check / enforce non-empty `remediation_options`.
         pass
