@@ -329,7 +329,7 @@ class ConfigCompliance(PrimaryModel):  # pylint: disable=too-many-ancestors
     actual = models.JSONField(blank=True, help_text="Actual Configuration for feature")
     intended = models.JSONField(blank=True, help_text="Intended Configuration for feature")
     # these three are config snippets exposed for the ConfigDeployment.
-    remediation = models.JSONField(blank=True, help_text="Remediation Configuration for feature")
+    remediation = models.JSONField(blank=True, help_text="Remediation Configuration for the device")
     missing = models.JSONField(blank=True, help_text="Configuration that should be on the device.")
     extra = models.JSONField(blank=True, help_text="Configuration that should not be on the device.")
 
@@ -473,30 +473,6 @@ class GoldenConfig(PrimaryModel):  # pylint: disable=too-many-ancestors
             object_data_v2=serialize_object_v2(self),
             related_object=related_object,
         )
-
-    # def save(self, *args, **kwargs):
-    #     """Save method is overloaded here to attempt generating the remediation config if the backup and intended configs are present."""
-    #     if self.backup_config and self.intended_config:
-    #         h_config_options = None
-    #         try:
-    #             # Get the remediation settings for the device platform
-    #             h_config_options = HConfigOptions.objects.get(target_platform=self.device.platform.id)
-    #         except HConfigOptions.DoesNotExist:
-    #             # If we don't have a remediation settings for the device platform, then we can attempt to generate the remediation config if it matches one of our default supported platforms
-    #             if self.device.platform.slug in PLATFORM_LOOKUP_TABLE.keys():
-    #                 host = Host(hostname=self.device.name, os=PLATFORM_LOOKUP_TABLE.get(self.device.platform.slug))
-    #                 host.load_generated_config(self.intended_config)
-    #                 host.load_running_config(self.backup_config)
-    #                 host.remediation_config()
-    #                 self.remediation = host.remediation_config_filtered_text(include_tags={}, exclude_tags={})
-    #         # If we can match a remediation settings to the device platform, then we can generate the remediation config with those custom settings
-    #         if h_config_options and h_config_options.target_platform == self.device.platform:
-    #             host = Host(hostname=self.device.name, hconfig_options=h_config_options.hier_options)
-    #             host.load_generated_config(self.intended_config)
-    #             host.load_running_config(self.backup_config)
-    #             host.remediation_config()
-    #             self.remediation = host.remediation_config_filtered_text(include_tags={}, exclude_tags={})
-    #     super().save(*args, **kwargs)
 
     class Meta:
         """Set unique together fields for model."""
