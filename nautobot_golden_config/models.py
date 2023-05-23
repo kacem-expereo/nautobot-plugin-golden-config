@@ -19,6 +19,8 @@ from nautobot_golden_config.choices import ComplianceRuleTypeChoice, Remediation
 from nautobot_golden_config.utilities.constant import ENABLE_SOTAGG, PLUGIN_CFG
 from nautobot_golden_config.utilities.utils import get_platform
 
+from hier_config import Host as HierConfigHost
+
 
 LOGGER = logging.getLogger(__name__)
 GRAPHQL_STR_START = "query ($device_id: ID!)"
@@ -237,14 +239,6 @@ class ComplianceRule(PrimaryModel):  # pylint: disable=too-many-ancestors
 
     feature = models.ForeignKey(to="ComplianceFeature", on_delete=models.CASCADE, blank=False, related_name="feature")
 
-    remediation_setting = models.ForeignKey(
-        to="RemediationSetting",
-        on_delete=models.PROTECT,
-        blank=True,
-        null=True,
-        related_name="compliancerules",
-    )
-
     platform = models.ForeignKey(
         to="dcim.Platform",
         on_delete=models.CASCADE,
@@ -262,6 +256,16 @@ class ComplianceRule(PrimaryModel):  # pylint: disable=too-many-ancestors
         verbose_name="Configured Ordered",
         help_text="Whether or not the configuration order matters, such as in ACLs.",
     )
+
+    # config remediation boolean is set on the `ComplianceRule`
+    config_remediation = models.BooleanField(
+        default=False,
+        null=False,
+        blank=False,
+        verbose_name="Config Remediation",
+        help_text="Whether or not the config remediation is executed for this compliance rule.",
+    )
+
     match_config = models.TextField(
         null=True,
         blank=True,
@@ -395,6 +399,9 @@ class ConfigCompliance(PrimaryModel):  # pylint: disable=too-many-ancestors
 
         # Perform remediation only if not compliant.
         if not self.compliance:
+
+            # TODO(bobby): raise/skip if the platform's remediationSetting object does not exist
+
             remediation_config = FUNC_MAPPER[self.rule.remediation_setting.remediation_type](obj=self)
             self.remediation = remediation_config
 
@@ -808,10 +815,14 @@ class ConfigReplace(PrimaryModel):  # pylint: disable=too-many-ancestors
 class RemediationSetting(PrimaryModel):  # pylint: disable=too-many-ancestors
     """RemediationSetting details."""
 
-    # name as the unique key follows the goldenConfigSetting pattern
-    # !! setting platform here is not needed - platform is specified at the ComplianceRule already !!
-    name = models.CharField(max_length=100, unique=True, blank=False)
-    slug = models.SlugField(max_length=100, unique=True, blank=False)
+    # Remediation points to the platform
+    platform = models.ForeignKey(
+        to="dcim.Platform",
+        on_delete=models.CASCADE,
+        related_name="remediation_settings",
+        null=False,
+        blank=False,
+    )
 
     remediation_type = models.CharField(
         max_length=50,
@@ -823,19 +834,18 @@ class RemediationSetting(PrimaryModel):  # pylint: disable=too-many-ancestors
     # takes options.yaml.
     remediation_options = models.JSONField(default=dict)
 
-    csv_headers = ["name", "remediation_type", "remediation_options"]
+    csv_headers = ["platform", "remediation_type", "remediation_options"]
 
     def to_csv(self):
         """Indicates model fields to return as csv."""
         return (
-            self.name,
-            self.remediation_type,
+            self.platform,
             self.remediation_type,
         )
 
     def __str__(self):
         """Return a sane string representation of the instance."""
-        return f"{self.name}"
+        return self.platform.slug
 
     def get_absolute_url(self):
         """Absolute url for the RemediationRule instance."""

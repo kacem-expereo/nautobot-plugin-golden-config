@@ -330,8 +330,8 @@ class ComplianceRuleTable(BaseTable):
         """Table to display Compliance Rules Meta Data."""
 
         model = models.ComplianceRule
-        fields = ("pk", "feature", "platform", "description", "config_ordered", "match_config", "config_type")
-        default_columns = ("pk", "feature", "platform", "description", "config_ordered", "match_config", "config_type")
+        fields = ("pk", "feature", "platform", "description", "config_ordered", "match_config", "config_type", "remediation_setting")
+        default_columns = ("pk", "feature", "platform", "description", "config_ordered", "match_config", "config_type", "remediation_setting")
 
 
 # ConfigRemove
@@ -426,11 +426,11 @@ class RemediationSettingTable(BaseTable):
     """Table to display RemediationSetting Rules."""
 
     pk = ToggleColumn()
-    name = LinkColumn("plugins:nautobot_golden_config:remediationsetting", args=[A("pk")])
+    # name = LinkColumn("plugins:nautobot_golden_config:remediationsetting", args=[A("pk")])
 
     class Meta(BaseTable.Meta):
         """Table to display RemediationSetting Meta Data."""
 
         model = models.RemediationSetting
-        fields = ("pk", "name", "remediation_type")
-        default_columns = ("pk", "name", "remediation_type")
+        fields = ("pk", "platform", "remediation_type")
+        default_columns = ("pk", "platform", "remediation_type")

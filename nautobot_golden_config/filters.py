@@ -298,11 +298,11 @@ class RemediationSettingFilterSet(GenericPlatformFilterSet):
         """Perform the filtered search."""
         if not value.strip():
             return queryset
-        qs_filter = Q(name__icontains=value)
+        qs_filter = Q(platform__icontains=value)
         return queryset.filter(qs_filter)
 
     class Meta:
         """Boilerplate filter Meta data for Config Replace."""
 
         model = models.RemediationSetting
-        fields = ["id", "name"]
+        fields = ["id", "platform"]

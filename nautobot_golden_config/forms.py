@@ -122,7 +122,7 @@ class ComplianceRuleForm(NautobotModelForm):
             "config_ordered",
             "match_config",
             "config_type",
-            "remediation_setting",
+            # "remediation_setting",
         )
 
 
@@ -401,8 +401,7 @@ class RemediationSettingForm(NautobotModelForm):
 
         model = models.RemediationSetting
         fields = (
-            "name",
-            "slug",
+            "platform",
             "remediation_type",
             "remediation_options",
         )
@@ -411,9 +410,7 @@ class RemediationSettingForm(NautobotModelForm):
 class RemediationSettingFilterForm(NautobotFilterForm):
     """Filter Form for Line Replacement."""
 
-    name = utilities_forms.DynamicModelChoiceField(
-        queryset=models.RemediationSetting.objects.all(), to_field_name="name", required=False
-    )
+    model = models.RemediationSetting
 
 
 class RemediationSettingCSVForm(extras_forms.CustomFieldModelCSVForm):
